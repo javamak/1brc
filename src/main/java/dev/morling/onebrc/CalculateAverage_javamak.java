@@ -15,21 +15,22 @@
  */
 package dev.morling.onebrc;
 
-import static java.util.stream.Collectors.*;
-
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.stream.Collector;
 import java.util.stream.Stream;
+
+import static java.util.stream.Collectors.groupingBy;
 
 public class CalculateAverage_javamak {
 
@@ -43,7 +44,7 @@ public class CalculateAverage_javamak {
 
     private static record ResultRow(double min, double mean, double max) {
         public String toString() {
-            return round(min) + "/" + round(mean) + "/" + round(max);
+            return STR."\{round(min)}/\{round(mean)}/\{round(max)}";
         }
 
         private double round(double value) {
@@ -61,14 +62,6 @@ public class CalculateAverage_javamak {
     }
 
     public static void main(String[] args) throws IOException {
-        // Map<String, Double> measurements1 = Files.lines(Paths.get(FILE))
-        // .map(l -> l.split(";"))
-        // .collect(groupingBy(m -> m[0], averagingDouble(m -> Double.parseDouble(m[1]))));
-        //
-        // measurements1 = new TreeMap<>(measurements1.entrySet()
-        // .stream()
-        // .collect(toMap(e -> e.getKey(), e -> Math.round(e.getValue() * 10.0) / 10.0)));
-        // System.out.println(measurements1);
 
         Collector<Measurement, MeasurementAggregator, ResultRow> collector = Collector.of(
                 MeasurementAggregator::new,
@@ -93,11 +86,16 @@ public class CalculateAverage_javamak {
 
         var a = calcChunks(path).entrySet().parallelStream()
                 .flatMap(entry -> getLinesFromFile(path, entry)) // read file for each chunk and get the lines
-                .map(l -> new Measurement(l.split(";")))// convert each line to measurement object
+                .map(l -> new Measurement(breakBySemiColon(l)))// convert each line to measurement object
                 .collect(groupingBy(Measurement::station, collector));
         Map<String, ResultRow> measurements = new TreeMap<>(a);
 
         System.out.println(measurements);
+    }
+
+    static String[] breakBySemiColon(String str) {
+        var i = str.indexOf(";");
+        return new String[]{ str.substring(0, i), str.substring(i + 1) };
     }
 
     private static Stream<String> getLinesFromFile(Path path, Map.Entry<Long, Long> entry) {
@@ -105,8 +103,18 @@ public class CalculateAverage_javamak {
             channel.position(entry.getKey());
             ByteBuffer buffer = ByteBuffer.allocate((int) (entry.getValue() - entry.getKey() + 1));
             channel.read(buffer);
-            String chunk = new String(buffer.array());
-            return Arrays.stream(chunk.split("\n"));
+
+            List<String> lst = new ArrayList<>(10000);
+
+            var arr = buffer.array();
+            int startIndex = 0;
+            for (int i = 0; i < arr.length; i++) {
+                if (arr[i] == '\n') {
+                    lst.add(new String(Arrays.copyOfRange(arr, startIndex, i)));
+                    startIndex = i + 1;
+                }
+            }
+            return lst.stream();
         }
         catch (IOException e) {
             throw new RuntimeException(e);
@@ -117,7 +125,7 @@ public class CalculateAverage_javamak {
         long startPos = 0;
         Map<Long, Long> retMap = new HashMap<>();
         while (true) {
-            long endPos = calculateEndPosition(path, startPos, 1000 * 5000);
+            long endPos = calculateEndPosition(path, startPos);
             if (endPos == -1) {
                 break;
             }
@@ -128,19 +136,19 @@ public class CalculateAverage_javamak {
         return retMap;
     }
 
-    private static long calculateEndPosition(Path path, long startPos, long chunkSize) throws IOException {
+    private static long calculateEndPosition(Path path, long startPos) throws IOException {
         try (FileChannel channel = FileChannel.open(path, StandardOpenOption.READ)) {
             if (startPos >= channel.size()) {
                 return -1;
             }
 
-            long currentPos = startPos + chunkSize;
+            long currentPos = startPos + (long) 100000;
             if (currentPos >= channel.size()) {
                 currentPos = channel.size() - 1;
             }
 
             channel.position(currentPos);
-            ByteBuffer buffer = ByteBuffer.allocate(1024);
+            ByteBuffer buffer = ByteBuffer.allocateDirect(1024);
             int readBytes = channel.read(buffer);
 
             if (readBytes > 0) {
