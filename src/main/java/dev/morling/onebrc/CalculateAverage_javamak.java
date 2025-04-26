@@ -20,10 +20,10 @@ import static java.util.stream.Collectors.*;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
@@ -35,7 +35,7 @@ public class CalculateAverage_javamak {
 
     private static final String FILE = "./measurements.txt";
 
-    private static record Measurement(String station, double value) {
+    private record Measurement(String station, double value) {
         private Measurement(String[] parts) {
             this(parts[0], Double.parseDouble(parts[1]));
         }
@@ -51,7 +51,15 @@ public class CalculateAverage_javamak {
         }
     }
 
-    ;
+    private static void spawnWorker() throws IOException {
+        ProcessHandle.Info info = ProcessHandle.current().info();
+        ArrayList<String> workerCommand = new ArrayList<>();
+        info.command().ifPresent(workerCommand::add);
+        info.arguments().ifPresent(args -> workerCommand.addAll(Arrays.asList(args)));
+        workerCommand.add("--worker");
+        new ProcessBuilder().command(workerCommand).inheritIO().redirectOutput(ProcessBuilder.Redirect.PIPE)
+                .start().getInputStream().transferTo(System.out);
+    }
 
     private static class MeasurementAggregator {
         private double min = Double.POSITIVE_INFINITY;
@@ -60,7 +68,13 @@ public class CalculateAverage_javamak {
         private long count;
     }
 
-    public static void main(String[] args) throws IOException {
+    public static void main(String[] args) throws IOException, InterruptedException {
+        // Thread.sleep(5000);
+
+        if (args.length == 0 || !("--worker".equals(args[0]))) {
+            spawnWorker();
+            return;
+        }
         // Map<String, Double> measurements1 = Files.lines(Paths.get(FILE))
         // .map(l -> l.split(";"))
         // .collect(groupingBy(m -> m[0], averagingDouble(m -> Double.parseDouble(m[1]))));
@@ -92,25 +106,49 @@ public class CalculateAverage_javamak {
         var path = Paths.get(FILE);
 
         var a = calcChunks(path).entrySet().parallelStream()
-                .flatMap(entry -> getLinesFromFile(path, entry)) // read file for each chunk and get the lines
-                .map(l -> new Measurement(l.split(";")))// convert each line to measurement object
+                .flatMap(entry -> getMeasurementFromFile(path, entry)) // read file for each chunk and get the lines
+                // .map(l -> new Measurement(split(l)))// convert each line to measurement object
                 .collect(groupingBy(Measurement::station, collector));
         Map<String, ResultRow> measurements = new TreeMap<>(a);
 
         System.out.println(measurements);
     }
 
-    private static Stream<String> getLinesFromFile(Path path, Map.Entry<Long, Long> entry) {
+    private static Stream<Measurement> getMeasurementFromFile(Path path, Map.Entry<Long, Long> entry) {
         try (FileChannel channel = FileChannel.open(path, StandardOpenOption.READ)) {
             channel.position(entry.getKey());
             ByteBuffer buffer = ByteBuffer.allocate((int) (entry.getValue() - entry.getKey() + 1));
             channel.read(buffer);
-            String chunk = new String(buffer.array());
-            return Arrays.stream(chunk.split("\n"));
+
+            var b = buffer.array();
+            var idx = 0;
+            var res = new ArrayList<Measurement>();
+            var cidx = 0;
+            for (int i = 0; i < b.length; i++) {
+
+                if (b[i] == '\n') {
+                    var station = new String(b, idx, cidx - idx);
+                    var mes = Double.parseDouble(new String(b, cidx + 1, (i - cidx - 1)));
+                    res.add(new Measurement(station, mes));
+                    idx = i + 1;
+                }
+                else if (b[i] == ';') {
+                    cidx = i;
+                }
+            }
+            return res.stream();
         }
         catch (IOException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    private static String[] split(String input) {
+        var res = new String[2];
+        var idx = input.indexOf(';');
+        res[0] = input.substring(0, idx);
+        res[1] = input.substring(idx + 1);
+        return res;
     }
 
     private static Map<Long, Long> calcChunks(Path path) throws IOException {

@@ -17,3 +17,5 @@
 
 JAVA_OPTS="-Xmx25G -Xms15G -XX:+UseParallelGC"
 java $JAVA_OPTS --class-path target/average-1.0.0-SNAPSHOT.jar dev.morling.onebrc.CalculateAverage_javamak
+#sudo sysctl kernel.perf_event_paranoid=-1
+#perf stat -e branches,branch-misses,cache-references,cache-misses,cycles,instructions,idle-cycles-backend,idle-cycles-frontend,task-clock -- java $JAVA_OPTS --class-path target/average-1.0.0-SNAPSHOT.jar dev.morling.onebrc.CalculateAverage_javamak

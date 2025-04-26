@@ -25,7 +25,7 @@
   
   <properties>
     <maven.compiler.parameters>true</maven.compiler.parameters>
-    <maven.compiler.release>21</maven.compiler.release>
+    <maven.compiler.release>24</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
   </properties>
@@ -167,6 +167,19 @@
         </plugin>
       </plugins>
     </pluginManagement>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <configuration>
+          <source>24</source>
+          <target>24</target>
+          <compilerArgs>
+            --enable-preview
+          </compilerArgs>
+        </configuration>
+      </plugin>
+    </plugins>
 
   </build>
   <profiles>
