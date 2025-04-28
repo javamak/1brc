@@ -15,15 +15,12 @@
 #  limitations under the License.
 #
 
-JAVA_OPTS="-Xmx25G -Xms15G -XX:+UseParallelGC"
-java $JAVA_OPTS --class-path target/average-1.0.0-SNAPSHOT.jar dev.morling.onebrc.CalculateAverage_javamak
-
 if [ -f target/CalculateAverage_javamak_image ]; then
-    #echo "Picking up existing native image 'target/CalculateAverage_javamak_image', delete the file to select JVM mode." 1>&2
+    echo "Picking up existing native image 'target/CalculateAverage_javamak_image', delete the file to select JVM mode." 1>&2
     target/CalculateAverage_javamak_image
 else
     JAVA_OPTS="-Xmx25G -Xms15G -XX:+UseParallelGC --enable-preview"
-#    echo "Chosing to run the app in JVM mode as no native image was found, use prepare_javamak.sh to generate." 1>&2
+    echo "Chosing to run the app in JVM mode as no native image was found, use prepare_javamak.sh to generate." 1>&2
     java $JAVA_OPTS --class-path target/average-1.0.0-SNAPSHOT.jar dev.morling.onebrc.CalculateAverage_javamak
 fi
 
@@ -32,3 +29,4 @@ fi
 #sudo sysctl kernel.perf_event_paranoid=-1
 #perf stat -e branches,branch-misses,cache-references,cache-misses,cycles,instructions,idle-cycles-backend,idle-cycles-frontend,task-clock -- java $JAVA_OPTS --class-path target/average-1.0.0-SNAPSHOT.jar dev.morling.onebrc.CalculateAverage_javamak
 #time ./calculate_average_javamak.sh
+#perf stat -e branches,branch-misses,cache-references,cache-misses,cycles,instructions,idle-cycles-backend,idle-cycles-frontend,task-clock -- target/CalculateAverage_javamak_image
