@@ -15,8 +15,6 @@
  */
 package dev.morling.onebrc;
 
-import static java.util.stream.Collectors.*;
-
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
@@ -31,17 +29,16 @@ import java.util.TreeMap;
 import java.util.stream.Collector;
 import java.util.stream.Stream;
 
+import static java.util.stream.Collectors.groupingBy;
+
 public class CalculateAverage_javamak {
 
     private static final String FILE = "./measurements.txt";
 
     private record Measurement(String station, double value) {
-        private Measurement(String[] parts) {
-            this(parts[0], Double.parseDouble(parts[1]));
-        }
     }
 
-    private static record ResultRow(double min, double mean, double max) {
+    private record ResultRow(double min, double mean, double max) {
         public String toString() {
             return round(min) + "/" + round(mean) + "/" + round(max);
         }
@@ -51,21 +48,20 @@ public class CalculateAverage_javamak {
         }
     }
 
+    private static class MeasurementAggregator {
+        private double min = Double.POSITIVE_INFINITY;
+        private double max = Double.NEGATIVE_INFINITY;
+        private double sum;
+        private long count;
+    }
+
     private static void spawnWorker() throws IOException {
         ProcessHandle.Info info = ProcessHandle.current().info();
         ArrayList<String> workerCommand = new ArrayList<>();
         info.command().ifPresent(workerCommand::add);
         info.arguments().ifPresent(args -> workerCommand.addAll(Arrays.asList(args)));
         workerCommand.add("--worker");
-        new ProcessBuilder().command(workerCommand).inheritIO().redirectOutput(ProcessBuilder.Redirect.PIPE)
-                .start().getInputStream().transferTo(System.out);
-    }
-
-    private static class MeasurementAggregator {
-        private double min = Double.POSITIVE_INFINITY;
-        private double max = Double.NEGATIVE_INFINITY;
-        private double sum;
-        private long count;
+        new ProcessBuilder().command(workerCommand).inheritIO().redirectOutput(ProcessBuilder.Redirect.PIPE).start().getInputStream().transferTo(System.out);
     }
 
     public static void main(String[] args) throws IOException, InterruptedException {
@@ -75,39 +71,26 @@ public class CalculateAverage_javamak {
             spawnWorker();
             return;
         }
-        // Map<String, Double> measurements1 = Files.lines(Paths.get(FILE))
-        // .map(l -> l.split(";"))
-        // .collect(groupingBy(m -> m[0], averagingDouble(m -> Double.parseDouble(m[1]))));
-        //
-        // measurements1 = new TreeMap<>(measurements1.entrySet()
-        // .stream()
-        // .collect(toMap(e -> e.getKey(), e -> Math.round(e.getValue() * 10.0) / 10.0)));
-        // System.out.println(measurements1);
 
-        Collector<Measurement, MeasurementAggregator, ResultRow> collector = Collector.of(
-                MeasurementAggregator::new,
-                (a, m) -> {
-                    a.min = Math.min(a.min, m.value);
-                    a.max = Math.max(a.max, m.value);
-                    a.sum += m.value;
-                    a.count++;
-                },
-                (agg1, agg2) -> {
-                    var res = new MeasurementAggregator();
-                    res.min = Math.min(agg1.min, agg2.min);
-                    res.max = Math.max(agg1.max, agg2.max);
-                    res.sum = agg1.sum + agg2.sum;
-                    res.count = agg1.count + agg2.count;
+        Collector<Measurement, MeasurementAggregator, ResultRow> collector = Collector.of(MeasurementAggregator::new, (a, m) -> {
+            a.min = Math.min(a.min, m.value);
+            a.max = Math.max(a.max, m.value);
+            a.sum += m.value;
+            a.count++;
+        }, (agg1, agg2) -> {
+            var res = new MeasurementAggregator();
+            res.min = Math.min(agg1.min, agg2.min);
+            res.max = Math.max(agg1.max, agg2.max);
+            res.sum = agg1.sum + agg2.sum;
+            res.count = agg1.count + agg2.count;
 
-                    return res;
-                },
-                agg -> new ResultRow(agg.min, agg.sum / agg.count, agg.max));
+            return res;
+        }, agg -> new ResultRow(agg.min, (Math.round(agg.sum * 10.0) / 10.0) / agg.count, agg.max));
 
         var path = Paths.get(FILE);
 
         var a = calcChunks(path).entrySet().parallelStream()
                 .flatMap(entry -> getMeasurementFromFile(path, entry)) // read file for each chunk and get the lines
-                // .map(l -> new Measurement(split(l)))// convert each line to measurement object
                 .collect(groupingBy(Measurement::station, collector));
         Map<String, ResultRow> measurements = new TreeMap<>(a);
 
@@ -128,7 +111,8 @@ public class CalculateAverage_javamak {
 
                 if (b[i] == '\n') {
                     var station = new String(b, idx, cidx - idx);
-                    var mes = Double.parseDouble(new String(b, cidx + 1, (i - cidx - 1)));
+                    var mes = getTemp(b, cidx + 1, i);
+
                     res.add(new Measurement(station, mes));
                     idx = i + 1;
                 }
@@ -143,19 +127,30 @@ public class CalculateAverage_javamak {
         }
     }
 
-    private static String[] split(String input) {
-        var res = new String[2];
-        var idx = input.indexOf(';');
-        res[0] = input.substring(0, idx);
-        res[1] = input.substring(idx + 1);
-        return res;
+    static double getTemp(byte[] bytes, int sidx, int eidx) {
+        int n = 0;
+        int c = 0;
+        int sign = 1;
+        for (int i = sidx; i < eidx; i++) {
+            if (bytes[i] == '-') {
+                sign = -1;
+                continue;
+            }
+            else if (bytes[i] == '.') {
+                c = 1;
+                continue;
+            }
+            n = (n * 10) + (bytes[i] - '0');
+            c *= 10;
+        }
+        return sign * ((double) n / c);
     }
 
     private static Map<Long, Long> calcChunks(Path path) throws IOException {
         long startPos = 0;
         Map<Long, Long> retMap = new HashMap<>();
         while (true) {
-            long endPos = calculateEndPosition(path, startPos, 1000 * 5000);
+            long endPos = calculateEndPosition(path, startPos, 1000 * 2000);
             if (endPos == -1) {
                 break;
             }
@@ -178,7 +173,7 @@ public class CalculateAverage_javamak {
             }
 
             channel.position(currentPos);
-            ByteBuffer buffer = ByteBuffer.allocate(1024);
+            ByteBuffer buffer = ByteBuffer.allocate(100);
             int readBytes = channel.read(buffer);
 
             if (readBytes > 0) {
